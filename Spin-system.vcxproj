@@ -125,6 +125,8 @@
   <ItemGroup>
     <ClCompile Include="Matrix.cpp" />
     <ClCompile Include="Star.cpp" />
+    <ClCompile Include="Train_recursive.cpp" />
+    <ClCompile Include="Train_vector.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Matrix.h" />

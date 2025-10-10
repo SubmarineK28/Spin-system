@@ -3,6 +3,10 @@
 #include <complex>
 #include <iostream>
 #include <random>
+#include <algorithm>
+#include <iomanip>
+#include <locale>
+#include <chrono>
 
 using namespace std;
 
@@ -31,6 +35,7 @@ Structure build_structure(const std::vector<std::vector<int>>& vec_full,
 void print_matrix(const Matrix2x2& M);
 void print_structure_codes(const std::vector<std::vector<int>>& vec_full);
 void print_structure_matrices(const Structure& S);
+void print_structure_term(const vector< Matrix2x2>& term);
 void printVector(const std::vector<Complex>& v);
 
 // --- —умма ---
@@ -41,17 +46,39 @@ Matrix2x2 add_vectors(const std::vector<Complex>& a, const std::vector<Complex>&
 void kron_mult_recursive(   ///////////// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! AAAAAAAAAAAAAAAAAAAAAAAA
     const std::vector<Matrix2x2>& factors,
     size_t N,
-    const vector<Complex>& vec_in,
-    vector<Complex>& vec_out,
+    const Matrix2x2& vec_in,
+    Matrix2x2& vec_out,
     size_t depth,
     size_t offset_in,
     size_t offset_out,
     size_t stride
 );
 
+void kron_mult_recursive_old(   ///////////// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! AAAAAAAAAAAAAAAAAAAAAAAA
+    const std::vector<Matrix2x2>& factors,
+    size_t N,
+    const Matrix2x2& vec_in,
+    Matrix2x2& vec_out,
+    size_t depth,
+    size_t offset_in,
+    size_t offset_out,
+    size_t stride
+);
+
+void kron_mult_recursive_double(
+    const std::vector<Matrix2x2>& factors,
+    size_t depth,
+    const Complex* src,
+    Complex* dst,
+    size_t stride,
+    size_t dim
+);
+
 /// --- скал€рное умножение ---  
 Complex dot_product(const std::vector<Complex>& a, const std::vector<Complex>& b);
 
-Matrix2x2 random_normal_vector(size_t dim, double mean, double stddev);
+vector<Complex> random_normal_vector(size_t dim, double mean, double stddev);
+vector<Complex> generateRademacherComplexVector(size_t dimension);
+vector<Complex> Hutchinson_vector(size_t n);
 
 void printVector_double(const std::vector<double>& v);

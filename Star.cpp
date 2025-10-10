@@ -9,21 +9,25 @@ using namespace std;
 using namespace std::chrono;
 
 
-// --- Обёртка ---
+ //--- Обёртка ---
 static vector<Complex> kron_mult(const std::vector<std::vector<Matrix2x2>>& factors, const vector<Complex>& vec) {
     size_t N = factors[0].size();
     size_t dim = size_t(1) << N;
     vector<Complex> Sum_0(dim, 0.0);
+
     for (const auto& term : factors) {
         vector<Complex> result(dim, 0.0);
-        kron_mult_recursive(term, N, vec, result, 0, 0, 0, dim);
+        cout << "\n";
+        print_structure_term(term);
+        cout << "\n";
+        kron_mult_recursive_double(term, 0, vec.data(), result.data(), dim, dim);
         Sum_0 = add_vectors(Sum_0, result);
     }
 
     return Sum_0;
 }
 
-// --- Печать вектора ---
+ //--- Печать вектора ---
 static void printVector(const vector<Complex>& v) {
     for (size_t i = 0; i < v.size(); ++i) {
         for (size_t i = 0; i < v.size(); ++i) {
@@ -34,14 +38,18 @@ static void printVector(const vector<Complex>& v) {
 }
 
 
-// --- main ---
-int main() {
-    auto start = high_resolution_clock::now();
+//--- main ---
 
-    size_t k = 1; // power
-    double M = 50.0; // samples
+int main() {
+    auto start_total = high_resolution_clock::now();
+
+    time_point<high_resolution_clock> start_one_kron;
+    time_point<high_resolution_clock> end_one_kron;
+
+    size_t k = 2; // power
+    double M = 200.0; // samples
     double Betta = 0.0;
-    size_t N = 20;  // кол-во частиц (кубитов)
+    size_t N = 2;  // кол-во частиц (кубитов)
     int dim = 1 << N;
     cout << "Building H0 and M0 structures...\n";
 
@@ -51,15 +59,15 @@ int main() {
     auto konst = factor(N);
 
     auto H0 = build_structure(H0_struct, konst);
-    auto M0 = build_structure(M0_struct, konst);
+    auto M0 = build_structure(M0_struct, konst); // каждая матрица в term умножилась на factor
 
-    //cout << "\nH0 terms (codes):\n";
-    //print_structure_codes(H0_struct);
+    cout << "\nH0 terms (codes):\n";
+    print_structure_codes(H0_struct);
     //cout << "\nH0 terms (matrices):\n";
     //print_structure_matrices(H0);
     //
-    //cout << "\n num of factors :\n";
-    //printVector_double(konst);
+    cout << "\n num of factors :\n";
+    printVector_double(konst);
     //
     //cout << "\nM0 terms (codes):\n";
     //print_structure_codes(M0_struct);
@@ -72,33 +80,37 @@ int main() {
     Complex Sp = 0.0;
 
     for (size_t i = 0; i < static_cast<size_t>(M); i++) {
-        auto vec = random_normal_vector(dim, 0.0, 1.0); // генерация случайного вектора
-        //printVector(vec); // print 
+        //auto vec = random_normal_vector(dim, 0.0, 1.0); // генерация случайного вектора
+        //auto vec = Hutchinson_vector(dim);
+        auto vec = generateRademacherComplexVector(dim);
+        cout << "\n";
+        cout << i << " vector = ";
+        printVector(vec); // print 
+        cout << "\n";
 
-        Matrix2x2 Sum_H0;// Возведение в степень k
-        Matrix2x2 Sum_M0;
-
+        Matrix2x2 Sum_H0(dim, 0.0);
+        Matrix2x2 Sum_M0(dim, 0.0);
         for (size_t j = 0; j < k; j++) {
-            if (j == 0 && Betta == 0) {
-                Sum_H0 = kron_mult(H0, vec);
-                //printVector(Sum_H0); // print 
+            if (j == 0) {
+                auto start_one_kron = high_resolution_clock::now();
+                Sum_H0 = kron_mult(H0, vec);    // корректно!
+                if (Betta != 0) {
+                    Sum_M0 = kron_mult(M0, vec); 
+                }
+                auto end_one_kron = high_resolution_clock::now();
+                auto duration_2 = duration_cast<milliseconds>(end_one_kron-start_one_kron);
+                cout << "Execution time of one kron_mult : " << duration_2.count() << " ms" << endl;
             }
-            else if (j == 0) {
-                Sum_H0 = kron_mult(H0, vec);
-                Sum_M0 = kron_mult(M0, vec);
-                printVector(Sum_H0); // print 
-                printVector(Sum_M0);
-            }
-            else if (Betta == 0){
-                Sum_H0 = kron_mult(H0, Sum_H0); // [factor*( A0 ? ... ? An) + ... + factor*( A0 ? ... ? An)] * vec = vec_1 !!!
-            }                                   // Sum_M0 = vec_k = [factor*( A0 ? ... ? An) + ... + factor*( A0 ? ... ? An)] * vec_k-1
             else {
-                Sum_H0 = kron_mult(H0, Sum_H0); // [factor*( A0 ? ... ? An) + ... + factor*( A0 ? ... ? An)] * vec = vec_1 !!!
-                Sum_M0 = kron_mult(M0, Sum_M0); // ....
+                Sum_H0 = kron_mult(H0, Sum_H0);
+                if (Betta != 0) {
+                    Sum_M0 = kron_mult(M0, Sum_M0);
+                }
             }
-        } 
+        }
+
         if (Betta == 0) {
-            auto dot_product_H0 = dot_product(vec, Sum_H0); // Умножеие на транспонированный вектор
+            auto dot_product_H0 = dot_product(vec, Sum_H0); // Умножеие на транспонированный вектор // корректно! 
             Sp_H0 += dot_product_H0;
         }
         else {
@@ -109,15 +121,19 @@ int main() {
         }
     }
 
-    Complex coeff = Complex(1.0, 0.0) / static_cast<double>(M);
+    //auto coeff = Complex(0.5, 0.0) / static_cast<double>(M);
+    double coeff = 1.0 / 200.0;
     Sp = coeff * Sp_H0 + Betta * coeff * Sp_M0;
 
+    cout << std::fixed << std::setprecision(4) << coeff; // Выведет: 0.0005
     cout << "\n Sp:" << Sp << "\n";
+    auto end_total = high_resolution_clock::now();
+    auto duration_1 = duration_cast<seconds>(end_total - start_total);
+    //auto duration_2 = duration_cast<seconds>(end_one_kron - end_one_kron);
+    cout << "Execution total time: " << duration_1.count() << " s" << endl;
+    //cout << "Execution time of one kron_mult : " << duration_2.count() << " s" << endl;
 
-    auto end = high_resolution_clock::now();
-    auto duration = duration_cast<seconds>(end - start);
-    cout << "Execution time: " << duration.count() << " s" << endl;
     return 0;
-
-    return 0;
-}
+ }
+//Complex(1.0, 0.0) / static_cast<double>(M);
+//<< std::cout.precision(3)

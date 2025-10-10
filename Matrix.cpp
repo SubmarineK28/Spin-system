@@ -2,6 +2,8 @@
 #include <vector>
 #include <complex>
 #include <random>
+#include <algorithm>
+
 
 using namespace std;
 
@@ -39,7 +41,7 @@ std::vector<double>  factor(int N) {
             double factor = 1.0 / pow(k - j, 3);
             konst.push_back(factor);
             konst.push_back(factor);
-            konst.push_back(factor);
+            konst.push_back(-2.0*factor);
         }
     }
     return konst;
@@ -97,8 +99,8 @@ Structure build_structure(const std::vector<std::vector<int>>& vec_full,
 
 // --- Печать матрицы ---
 void print_matrix(const Matrix2x2& M) {
-    std::cout << "[[" << M[0] << ", " << M[1] << "], "
-        << "[" << M[2] << ", " << M[3] << "]]";
+    std::cout << "\n[" << M[0] << ", " << M[1] << "], \n "
+        << "[" << M[2] << ", " << M[3] << "]\n";
 }
 
 // --- Печать структуры кодов (I, X, Y, Z) ---
@@ -127,13 +129,80 @@ void print_structure_matrices(const Structure& S) {
     }
 }
 
+void print_structure_term(const vector< Matrix2x2>& term) {
+        for (const auto& M : term) {
+            print_matrix(M);
+            std::cout << "   ";
+        }
+        std::cout << "\n";
+}
+
+
 // --- ( A0 ? ... ? An ) * vec --- произведение Кронеккера 
 
-void kron_mult_recursive(   ///////////// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! AAAAAAAAAAAAAAAAAAAAAAAA
+void kron_mult_recursive_old(   ///////////// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! AAAAAAAAAAAAAAAAAAAAAAAA
     const std::vector<Matrix2x2>& factors,
     size_t N,
-    const vector<Complex>& vec_in,
-    vector<Complex>& vec_out,
+    const Matrix2x2& vec_in, // ссылка на константу 
+    Matrix2x2& vec_out,
+    size_t depth,
+    size_t offset_in,
+    size_t offset_out,
+    size_t stride)
+{
+    if (depth == N) {
+        //cout << string(depth * 2, ' ') << "БАЗА: depth=" << depth
+        //    << " offset_in=" << offset_in
+        //    << " offset_out=" << offset_out << endl;
+        //
+        vec_out[offset_out] = vec_in[offset_in];
+        return;
+    }
+
+    size_t next_stride = stride / 2;
+    const auto& M = factors[depth]; ///// factors - вектор матриц, M - это уже ссылка на адрес одной матрицы 
+
+    // 
+
+    Matrix2x2 temp0(next_stride, 0.0);
+    Matrix2x2 temp1(next_stride, 0.0);
+   
+
+    //cout << string(depth * 2, ' ')
+    //    << "? Спуск рекурсии depth=" << depth
+    //    << " stride=" << stride << "\n";
+      
+    kron_mult_recursive_old(factors, N, vec_in, temp0, depth + 1, // при вызове kron я копирую вектор temp 
+        offset_in, 0, next_stride);
+    kron_mult_recursive_old(factors, N, vec_in, temp1, depth + 1,
+        offset_in + next_stride, 0, next_stride);
+
+    //cout << string(depth * 2, ' ')         
+    //    << "? Выполняется цикл for на depth=" << depth << "\n";
+
+
+    for (size_t i = 0; i < 2; ++i) {
+        for (size_t idx = 0; idx < next_stride; ++idx) {
+            Complex  val = M[i * 2 + 0] * temp0[idx] + M[i * 2 + 1] * temp1[idx];
+            vec_out[offset_out + i * next_stride + idx] = val;  // vec_out - это вектор предыдущего вызова: vec_out = {  (temp0) , (temp1) }
+         
+            //cout << string(depth * 2, ' ') << "(" << M[i * 2 + 0] << " * " << temp0[idx] << ")"
+            //    << " + "
+            //    << "(" << M[i * 2 + 1] << " * " << temp1[idx] << ")"
+            //    << " = " << val << "\n";
+            //
+            //cout << string(depth * 2, ' ') << "vec_out[" << offset_out << "+" << i << "*" << next_stride << "+ " << idx << "]" << " = " << val << "\n";
+        }
+    }
+}
+
+
+//
+void kron_mult_recursive(
+    const std::vector<Matrix2x2>& factors,
+    size_t N,
+    const Matrix2x2& vec_in,
+    Matrix2x2& vec_out,
     size_t depth,
     size_t offset_in,
     size_t offset_out,
@@ -145,23 +214,58 @@ void kron_mult_recursive(   ///////////// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 
     }
 
     size_t next_stride = stride / 2;
-    const auto& M = factors[depth]; ///// factors - вектор матриц, M - это уже ссылка на адрес одной матрицы 
+    const auto& M = factors[depth];
 
-    vector<Complex> temp0(next_stride, 0.0);
-    vector<Complex> temp1(next_stride, 0.0);
+    size_t temp0_offset = offset_out;
+    size_t temp1_offset = offset_out + next_stride;
 
-    kron_mult_recursive(factors, N, vec_in, temp0, depth + 1,
-        offset_in, 0, next_stride);
-    kron_mult_recursive(factors, N, vec_in, temp1, depth + 1,
-        offset_in + next_stride, 0, next_stride);
+    kron_mult_recursive(factors, N, vec_in, vec_out, depth + 1,
+        offset_in, temp0_offset, next_stride);
+    kron_mult_recursive(factors, N, vec_in, vec_out, depth + 1,
+        offset_in + next_stride, temp1_offset, next_stride);
 
     for (size_t i = 0; i < 2; ++i) {
         for (size_t idx = 0; idx < next_stride; ++idx) {
-            Complex val = M[i * 2 + 0] * temp0[idx] + M[i * 2 + 1] * temp1[idx];
+            Complex  val = M[i * 2 + 0] * vec_out[temp0_offset + idx]
+                + M[i * 2 + 1] * vec_out[temp1_offset + idx];
             vec_out[offset_out + i * next_stride + idx] = val;
         }
     }
 }
+
+void kron_mult_recursive_double(
+    const std::vector<Matrix2x2>& factors,
+    size_t depth,
+    const Complex* src,
+    Complex* dst,
+    size_t stride,
+    size_t dim
+) {
+    if (depth == factors.size()) {
+        // базовый случай: просто копируем вектор
+        std::copy(src, src + dim, dst);
+        return;
+    }
+
+    const auto& M = factors[depth];
+    size_t half = stride / 2;
+
+    // применяем матрицу M блок за блоком
+    for (size_t block = 0; block < dim; block += stride) {
+        for (size_t idx = 0; idx < half; ++idx) {
+            Complex x0 = src[block + idx];
+            Complex x1 = src[block + half + idx];
+
+            dst[block + idx] = M[0] * x0 + M[1] * x1;
+            dst[block + half + idx] = M[2] * x0 + M[3] * x1;
+        }
+    }
+
+    // рекурсивный вызов — двигаемся глубже
+    kron_mult_recursive_double(factors, depth + 1, dst, const_cast<Complex*>(src), half, dim);
+};
+
+
 
 std::vector<Complex> add_vectors(const std::vector<Complex>& a, const std::vector<Complex>& b) {
     std::vector<Complex> res(a.size());
@@ -182,27 +286,43 @@ Complex dot_product(const std::vector<Complex>& a, const std::vector<Complex>& b
     return sum;
 }
 
-Matrix2x2 random_normal_vector(size_t dim, double mean, double stddev) {
+
+vector<Complex> random_normal_vector(size_t dim, double mean, double stddev) {
     random_device rd;
     mt19937 gen(rd());
     normal_distribution<double> dist(mean, stddev);
 
-    Matrix2x2 vec(dim);
+    vector<Complex> vec(dim);
     for (size_t i = 0; i < dim; ++i) {
-        double re = dist(gen);  // действительная часть
-        double im = dist(gen);  // мнимая часть
+        double re = (dist(gen));  // действительная часть
+        double im = 0.0; // мнимая часть
         vec[i] = Complex(re, im);
     }
     return vec;
 }
 
-void printVector(const std::vector<Complex>& v) {
+vector<Complex> Hutchinson_vector(size_t n) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<int> dist(0, 1); // Use int!
+
+    std::vector<Complex> result(n);
+    for (size_t i = 0; i < n; ++i) {
+        double rademacher_1 = dist(gen);
+        double rademacher_2 = 0;
+        result[i] = Complex(rademacher_1, rademacher_2); // Real part is ±1, imaginary part is 0
+    }
+    return result;
+}
+
+void printVector(const vector<Complex>& v) {
     for (size_t i = 0; i < v.size(); ++i) {
         std::cout << "v[" << i << "] = "
-            << v[i].real() << " + " << v[i].imag() << "i"
-            << std::endl;
+            << v[i].real() << " + " << v[i].imag() << std::endl;
     }
 }
+
+//<< v[i].real() << " + " << v[i].imag() << "i"
 
 void printVector_double(const std::vector<double>& v) {
     for (size_t i = 0; i < v.size(); ++i) {
@@ -210,4 +330,27 @@ void printVector_double(const std::vector<double>& v) {
             << v[i]
             << std::endl;
     }
+}
+
+
+vector<Complex> generateRademacherComplexVector(size_t dimension) {
+    std::vector<Complex> result;
+    result.reserve(dimension);
+
+    std::random_device rd{};
+    std::mt19937 gen{ rd() };
+    std::uniform_int_distribution<int> dist(0, 1);
+
+    auto rademacher = [&]() -> double {
+        return dist(gen) == 0 ? -1.0 : 1.0;
+        };
+
+  
+    for (size_t i = 0; i < dimension; ++i) {
+        double real_part = rademacher();  
+        double imag_part = 0.0;  
+        result.emplace_back(real_part, imag_part);
+    }
+
+    return result;
 }
