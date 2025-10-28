@@ -10,22 +10,38 @@ using namespace std::chrono;
 
 
  //--- Обёртка ---
+//std::vector<Complex> kron_mult_wrapper(const std::vector<std::vector<Matrix2x2>>& factors, const std::vector<Complex>& vec) {
+//    size_t N = factors[0].size();
+//    size_t dim = 1ULL << N;
+//
+//    std::vector<Complex> Sum_0(dim, Complex(0.0, 0.0));
+//    std::vector<Complex> src(dim), dst(dim), tmp(dim);
+//
+//    // для каждого терма копируем исходный vec в src
+//    for (const auto& term : factors) {
+//        std::copy(vec.begin(), vec.end(), src.begin());
+//        kron_mult_iterative(term, src.data(), dst.data(), tmp.data(), dim);
+//        for (size_t i = 0; i < dim; ++i) Sum_0[i] += dst[i];
+//    }
+//    return Sum_0;
+//}
+
+//--- Обёртка ---
+
 std::vector<Complex> kron_mult_wrapper(const std::vector<std::vector<Matrix2x2>>& factors, const std::vector<Complex>& vec) {
     size_t N = factors[0].size();
     size_t dim = 1ULL << N;
 
-    std::vector<Complex> Sum_0(dim, Complex(0.0, 0.0));
+    std::vector<Complex> Sum_0(dim, Complex(0, 0));
     std::vector<Complex> src(dim), dst(dim), tmp(dim);
 
-    // для каждого терма копируем исходный vec в src
     for (const auto& term : factors) {
         std::copy(vec.begin(), vec.end(), src.begin());
-        kron_mult_iterative(term, src.data(), dst.data(), tmp.data(), dim);
+        kron_mult_iterative_avx2(term, src.data(), dst.data(), tmp.data(), dim);
         for (size_t i = 0; i < dim; ++i) Sum_0[i] += dst[i];
     }
     return Sum_0;
 }
-
 
 
 //--- main ---
@@ -44,7 +60,7 @@ int main() {
 
     size_t k = 2; // power
     double M = 1000.0; // samples
-    double Betta = 1.0;
+    double Betta = 0.0;
     size_t N = 2;  // кол-во частиц (кубитов)
     int dim = 1 << N;
     cout << "Building H0 and M0 structures...\n";
@@ -96,8 +112,8 @@ int main() {
                 //cout << "\n Sum_H0:\n";
                 //printVector(Sum_H0);// корректно?
                 auto end_one_kron = high_resolution_clock::now();
-                //auto duration_2 = duration_cast<milliseconds>(end_one_kron-start_one_kron);
-                //cout << "Execution time of one kron_mult : " << duration_2.count() << " ms" << endl;
+                auto duration_2 = duration_cast<milliseconds>(end_one_kron-start_one_kron);
+                cout << "Execution time of one kron_mult : " << duration_2.count() << " ms" << endl;
             }
             else {
                 Sum_H0 = kron_mult_wrapper(H, Sum_H0);
@@ -125,41 +141,41 @@ int main() {
 
     // ------------------------- тест ---------------------------- //
 
-    {
-        cout << "\n ------------- TEST --------------- \n";
-        Complex Sp_H0 = 0.0;
-        Complex Sp = 0.0;
-    
-        auto H_st = build_H0_matrix(H, N);
-        auto H2 = power_H0_matrix(H_st, 2);
-    
-        cout << "\nH0 matrix (" << (1 << N) << "x" << (1 << N) << "):\n";
-        //print_full_matrix(H);
-    
-            
-        for (size_t j = 0; j < static_cast<size_t>(M); j++) {
-    
-            auto vec = random_normal_vector(dim, 0.0, 1.0);
-            //vector<Complex> vec(dim, Complex(1.0, 0.0));
-    
-            auto dot_product_H0 = dot_product_1(H2, vec); // - вектор 
-            //cout << "\n dot_product_H:\n";
-            //printVector(dot_product_H0);
-            auto dot_product_T_H0 = dot_T_product(vec, dot_product_H0); // - число 
-    
-            Sp_H0 += dot_product_T_H0;
-        }
-    
-        Complex coeff = Complex(1.0, 0.0) / M;
-        Sp = coeff * Sp_H0;
-    
-        cout << std::fixed << std::setprecision(4) << coeff; // Выведет: 0.0005
-        cout << "\n Sp:" << Sp << "\n";
-    
-        Complex tr = trace_matrix(H2, dim);
-        std::cout << "Trace of H: " << tr << "\n";
-    
-    }
+    //{
+    //    cout << "\n ------------- TEST --------------- \n";
+    //    Complex Sp_H0 = 0.0;
+    //    Complex Sp = 0.0;
+    //
+    //    auto H_st = build_H0_matrix(H, N);
+    //    auto H2 = power_H0_matrix(H_st, 2);
+    //
+    //    cout << "\nH0 matrix (" << (1 << N) << "x" << (1 << N) << "):\n";
+    //    //print_full_matrix(H);
+    //
+    //        
+    //    for (size_t j = 0; j < static_cast<size_t>(M); j++) {
+    //
+    //        auto vec = random_normal_vector(dim, 0.0, 1.0);
+    //        //vector<Complex> vec(dim, Complex(1.0, 0.0));
+    //
+    //        auto dot_product_H0 = dot_product_1(H2, vec); // - вектор 
+    //        //cout << "\n dot_product_H:\n";
+    //        //printVector(dot_product_H0);
+    //        auto dot_product_T_H0 = dot_T_product(vec, dot_product_H0); // - число 
+    //
+    //        Sp_H0 += dot_product_T_H0;
+    //    }
+    //
+    //    Complex coeff = Complex(1.0, 0.0) / M;
+    //    Sp = coeff * Sp_H0;
+    //
+    //    cout << std::fixed << std::setprecision(4) << coeff; // Выведет: 0.0005
+    //    cout << "\n Sp:" << Sp << "\n";
+    //
+    //    Complex tr = trace_matrix(H2, dim);
+    //    std::cout << "Trace of H: " << tr << "\n";
+    //
+    //}
     return 0;
  }
 

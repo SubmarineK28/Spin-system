@@ -314,6 +314,117 @@ void kron_mult_iterative(
     }
 }
 
+// multiply complex scalar m (mr,mi) by two complex numbers packed as [ar0,ai0,ar1,ai1] in __m256d
+static inline __m256d cmplx_scalar_mul_2(const __m256d vec, const double mr, const double mi) {
+    // vec = [ar0, ai0, ar1, ai1]
+    __m256d mr_vec = _mm256_set1_pd(mr);    // [mr,mr,mr,mr]
+    __m256d mi_vec = _mm256_set1_pd(mi);    // [mi,mi,mi,mi]
+
+    __m256d perm = _mm256_permute_pd(vec, 0x5); // permute pairs -> [ai0, ar0, ai1, ar1]
+    __m256d t1 = _mm256_mul_pd(mr_vec, vec);    // mr * [ar,ai,...]
+    __m256d t2 = _mm256_mul_pd(mi_vec, perm);   // mi * [ai,ar,...]
+
+    // sign vector s = [-1, +1, -1, +1]
+    const __m256d sign = _mm256_set_pd(1.0, -1.0, 1.0, -1.0); // note order in set_pd is high->low; we'll multiply perm accordingly
+    // But easier: we want multiply t2 by [-1, +1, -1, +1] to add/subtract appropriately.
+    // Create s2 such that after multiply we have desired signs at positions [0..3].
+    const __m256d s2 = _mm256_setr_pd(-1.0, 1.0, -1.0, 1.0); // setr gives order low->high
+    __m256d t2s = _mm256_mul_pd(t2, s2);
+
+    return _mm256_add_pd(t1, t2s); // mr*vec + s2*(mi*perm)
+}
+
+// AVX2-optimized iterative Kron mult: factors size N (number of qubits), dim = 2^N
+void kron_mult_iterative_avx2(
+    const std::vector<Matrix2x2>& factors,
+    const Complex* src_in, // caller should provide modifiable src buffer (copy of input vec)
+    Complex* dst,
+    Complex* tmp,
+    size_t dim
+) {
+    // make modifiable pointer
+    Complex* src = const_cast<Complex*>(src_in);
+    Complex* buf = dst; // write here
+    size_t N = factors.size();
+
+    for (size_t depth = 0; depth < N; ++depth) {
+        const auto& M = factors[depth];
+        // expect M.size() == 4, matrix elements are Complex
+        double m00r = M[0].real(), m00i = M[0].imag();
+        double m01r = M[1].real(), m01i = M[1].imag();
+        double m10r = M[2].real(), m10i = M[2].imag();
+        double m11r = M[3].real(), m11i = M[3].imag();
+
+        size_t stride = size_t(1) << (N - depth - 1); // half-block length (called stride earlier)
+        size_t fullBlock = 2 * stride; // the block size we step over
+
+        // Parallelize over blocks
+    #pragma omp parallel for schedule(static)
+        for (long long block = 0; block < (long long)dim; block += (long long)fullBlock) {
+            size_t b = (size_t)block;
+
+            // process in chunks of 2 complex numbers (4 doubles) using AVX2
+            size_t i = 0;
+            for (; i + 1 < stride; i += 2) { // i indexes complex slots within half-block
+                size_t idx0 = b + i;
+                // addresses for a and b vectors (two complex numbers each)
+                const double* a_ptr = reinterpret_cast<const double*>(&src[idx0]);                // points to re0,im0,...
+                const double* b_ptr = reinterpret_cast<const double*>(&src[idx0 + stride]);     // second half longs
+
+                // load 2 complex numbers for a: [ar0, ai0, ar1, ai1]
+                __m256d va = _mm256_loadu_pd(a_ptr);
+                // load 2 complex numbers for b
+                __m256d vb = _mm256_loadu_pd(b_ptr);
+
+                // compute m00 * a
+                __m256d r_m00_a = cmplx_scalar_mul_2(va, m00r, m00i);
+                // compute m01 * b
+                __m256d r_m01_b = cmplx_scalar_mul_2(vb, m01r, m01i);
+                // sum => upper part
+                __m256d upper = _mm256_add_pd(r_m00_a, r_m01_b);
+
+                // compute m10 * a
+                __m256d r_m10_a = cmplx_scalar_mul_2(va, m10r, m10i);
+                // compute m11 * b
+                __m256d r_m11_b = cmplx_scalar_mul_2(vb, m11r, m11i);
+                __m256d lower = _mm256_add_pd(r_m10_a, r_m11_b);
+
+                // store upper into buf[idx0 .. idx0+1] (2 complex doubles)
+                _mm256_storeu_pd(reinterpret_cast<double*>(&buf[idx0]), upper);
+                // store lower into buf[idx0 + stride .. idx0 + stride +1]
+                _mm256_storeu_pd(reinterpret_cast<double*>(&buf[idx0 + stride]), lower);
+            }
+
+            // Tail: if stride is odd, or leftover one complex (i < stride)
+            for (; i < stride; ++i) {
+                size_t idx = b + i;
+                Complex a = src[idx];
+                Complex bb = src[idx + stride];
+                Complex up = M[0] * a + M[1] * bb;
+                Complex low = M[2] * a + M[3] * bb;
+                buf[idx] = up;
+                buf[idx + stride] = low;
+            }
+        } // end parallel blocks
+
+        // swap src and buf for next depth; ensure buf becomes a valid place to write next
+        std::swap(src, buf);
+
+        // set buf to point to an available buffer (either tmp or dst)
+        if (buf == dst) {
+            buf = tmp;
+        }
+        else {
+            buf = dst;
+        }
+    } // end depth loop
+
+    // result is in src pointer; ensure it's in dst
+    if (src != dst) {
+        std::copy(src, src + dim, dst);
+    }
+}
+
 std::vector<Complex> add_vectors(const std::vector<Complex>& a, const std::vector<Complex>& b) {
     std::vector<Complex> res(a.size());
     for (size_t i = 0; i < a.size(); ++i) {

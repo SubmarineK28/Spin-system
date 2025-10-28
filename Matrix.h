@@ -113,3 +113,16 @@ Matrix2x2 multiply_matrix(const Matrix2x2& A, const Matrix2x2& B);
 Matrix2x2 identity_matrix(size_t n);
 Matrix2x2 power_H0_matrix(Matrix2x2 H, int k);
 Complex trace_matrix(const std::vector<Complex>& H, size_t n);
+
+
+
+// --------------------- что-то побыстрее ----------------------
+
+static inline __m256d cmplx_scalar_mul_2(const __m256d vec, const double mr, const double mi);
+void kron_mult_iterative_avx2(
+    const std::vector<Matrix2x2>& factors,
+    const Complex* src_in, // caller should provide modifiable src buffer (copy of input vec)
+    Complex* dst,
+    Complex* tmp,
+    size_t dim
+);
