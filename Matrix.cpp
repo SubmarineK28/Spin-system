@@ -3,7 +3,9 @@
 #include <complex>
 #include <random>
 #include <algorithm>
-
+#include <thread>
+#include <omp.h>
+#include <algorithm>
 
 using namespace std;
 
@@ -11,9 +13,9 @@ using namespace std;
 // 0: I, 1: X, 2: Y, 3: Z
 enum PauliType { I = 0, X = 1, Y = 2, Z = 3 };
 
-using Complex = std::complex<double>;
-using Matrix2x2 = std::vector<Complex>;
-using Structure = std::vector<std::vector<Matrix2x2>>;
+using Complex = complex<double>;
+using Matrix2x2 = vector<Complex>;
+using Structure = vector<vector<Matrix2x2>>;
 
 // --- ћатрицы ѕаули ---
 Matrix2x2 pauli_I() { return { 1.0, 0.0, 0.0, 1.0 }; }
@@ -83,7 +85,7 @@ Structure build_structure(const std::vector<std::vector<int>>& vec_full,
     Structure H0;
     for (size_t term_idx = 0; term_idx < vec_full.size(); ++term_idx) {
         const auto& v = vec_full[term_idx]; // vec_state
-        std::vector<Matrix2x2> term;
+        vector<Matrix2x2> term;
         for (size_t i = 0; i < v.size(); ++i) {
             Matrix2x2 M = pauli_matrix(v[i]);
             if (i == 0) { // умножаем только первую матрицу
@@ -96,11 +98,41 @@ Structure build_structure(const std::vector<std::vector<int>>& vec_full,
     return H0; //  -  вектор матриц
 }
 
+Structure build_structure(const std::vector<std::vector<int>>& vec_full) {
+    Structure H0;
+    for (size_t term_idx = 0; term_idx < vec_full.size(); ++term_idx) {
+        const auto& v = vec_full[term_idx]; // vec_state
+        vector<Matrix2x2> term;
+        for (size_t i = 0; i < v.size(); ++i) {
+            Matrix2x2 M = pauli_matrix(v[i]);
+            term.push_back(M);
+        }
+        H0.push_back(term);
+    }
+    return H0; //  -  вектор матриц
+}
+
 
 // --- ѕечать матрицы ---
 void print_matrix(const Matrix2x2& M) {
     std::cout << "\n[" << M[0] << ", " << M[1] << "], \n "
         << "[" << M[2] << ", " << M[3] << "]\n";
+}
+
+void print_full_matrix(const Matrix2x2& M) {
+    size_t dim = static_cast<size_t>(std::sqrt(M.size()));
+
+    std::cout << "\nMatrix (" << dim << "x" << dim << "):\n";
+
+    for (size_t i = 0; i < dim; ++i) {
+        std::cout << "[ ";
+        for (size_t j = 0; j < dim; ++j) {
+            const Complex& val = M[i * dim + j];
+            std::cout << "(" << val.real() << "," << val.imag() << ")";
+            if (j + 1 < dim) std::cout << ", ";
+        }
+        std::cout << " ]\n";
+    }
 }
 
 // --- ѕечать структуры кодов (I, X, Y, Z) ---
@@ -196,7 +228,6 @@ void kron_mult_recursive_old(   ///////////// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     }
 }
 
-
 //
 void kron_mult_recursive(
     const std::vector<Matrix2x2>& factors,
@@ -233,39 +264,55 @@ void kron_mult_recursive(
     }
 }
 
-void kron_mult_recursive_double(
+void kron_mult_iterative(
     const std::vector<Matrix2x2>& factors,
-    size_t depth,
-    const Complex* src,
+    const Complex* src_in,
     Complex* dst,
-    size_t stride,
+    Complex* tmp,
     size_t dim
 ) {
-    if (depth == factors.size()) {
-        // базовый случай: просто копируем вектор
-        std::copy(src, src + dim, dst);
-        return;
-    }
+    // –абочие указатели одного типа
+    Complex* src = const_cast<Complex*>(src_in);
+    Complex* buf = dst; // будем писать в buf
+    size_t N = factors.size();
 
-    const auto& M = factors[depth];
-    size_t half = stride / 2;
+    // копируем входной src_in в src (src и src_in могут совпадать Ч caller делает копию)
+    // caller гарантирует, что src points to modifiable buffer (we used copy before call)
 
-    // примен€ем матрицу M блок за блоком
-    for (size_t block = 0; block < dim; block += stride) {
-        for (size_t idx = 0; idx < half; ++idx) {
-            Complex x0 = src[block + idx];
-            Complex x1 = src[block + half + idx];
+    for (size_t depth = 0; depth < N; ++depth) {
+        const auto& M = factors[depth];
+        size_t stride = size_t(1) << (N - depth - 1); // блок длины stride, total block 2*stride
 
-            dst[block + idx] = M[0] * x0 + M[1] * x1;
-            dst[block + half + idx] = M[2] * x0 + M[3] * x1;
+    #pragma omp parallel for
+        for (long long block = 0; block < (long long)dim; block += 2LL * (long long)stride) {
+            for (size_t i = 0; i < stride; ++i) {
+                Complex a = src[block + i];
+                Complex b = src[block + i + stride];
+                buf[block + i] = M[0] * a + M[1] * b;
+                buf[block + i + stride] = M[2] * a + M[3] * b;
+            }
+        }
+
+        // swap roles: next iteration read from buf, write into other buffer
+        // we will use tmp to alternate: src <-> buf <-> tmp
+        std::swap(src, buf);
+        // now buf points to the other buffer (either dst or src_in's buffer)
+        // ensure we have somewhere to write on next iteration: if buf == dst then next write uses src buffer, etc.
+        // We'll maintain that caller provided two buffers (src_in as modifiable copy and dst), or we used tmp externally.
+        if (src == dst) {
+            // we want buf to point to tmp for next write
+            buf = tmp;
+        }
+        else {
+            buf = dst; // write back to dst if possible
         }
     }
 
-    // рекурсивный вызов Ч двигаемс€ глубже
-    kron_mult_recursive_double(factors, depth + 1, dst, const_cast<Complex*>(src), half, dim);
-};
-
-
+    // after loop, src points to the buffer that contains final result
+    if (src != dst) {
+        std::copy(src, src + dim, dst);
+    }
+}
 
 std::vector<Complex> add_vectors(const std::vector<Complex>& a, const std::vector<Complex>& b) {
     std::vector<Complex> res(a.size());
@@ -285,7 +332,6 @@ Complex dot_product(const std::vector<Complex>& a, const std::vector<Complex>& b
     }
     return sum;
 }
-
 
 vector<Complex> random_normal_vector(size_t dim, double mean, double stddev) {
     random_device rd;
@@ -309,11 +355,24 @@ vector<Complex> Hutchinson_vector(size_t n) {
     std::vector<Complex> result(n);
     for (size_t i = 0; i < n; ++i) {
         double rademacher_1 = dist(gen);
-        double rademacher_2 = 0;
+        double rademacher_2 = 0.0;
         result[i] = Complex(rademacher_1, rademacher_2); // Real part is ±1, imaginary part is 0
     }
     return result;
 }
+//
+//std::vector<Complex> generate_rademacher_vector(size_t dim) {
+//    std::random_device rd;
+//    std::mt19937 gen(rd());
+//    std::uniform_int_distribution<int> dist(0, 1); // 0 или 1
+//
+//    std::vector<Complex> zi(dim);
+//    for (size_t i = 0; i < dim; ++i) {
+//        int r = dist(gen);
+//        zi[i] = Complex(r == 0 ? -1.0 : 1.0, 0.0); // ±1
+//    }
+//    return zi;
+//}
 
 void printVector(const vector<Complex>& v) {
     for (size_t i = 0; i < v.size(); ++i) {
@@ -348,9 +407,195 @@ vector<Complex> generateRademacherComplexVector(size_t dimension) {
   
     for (size_t i = 0; i < dimension; ++i) {
         double real_part = rademacher();  
-        double imag_part = 0.0;  
+        double imag_part = rademacher();
         result.emplace_back(real_part, imag_part);
     }
 
     return result;
 }
+
+
+// ------------------------- тест ---------------------------- //
+
+Matrix2x2 kron(const Matrix2x2& A, const Matrix2x2& B) {
+    size_t nA = static_cast<size_t>(std::sqrt(A.size()));
+    size_t nB = static_cast<size_t>(std::sqrt(B.size()));
+    size_t nC = nA * nB;
+
+    Matrix2x2 C(nC * nC);
+
+    for (size_t i = 0; i < nA; ++i) {
+        for (size_t j = 0; j < nA; ++j) {
+            Complex a = A[i * nA + j];
+            for (size_t k = 0; k < nB; ++k) {
+                for (size_t l = 0; l < nB; ++l) {
+                    C[(i * nB + k) * nC + (j * nB + l)] = a * B[k * nB + l];
+                }
+            }
+        }
+    }
+    return C;
+}
+
+// --- ѕостроение полной матрицы H0 ---
+Matrix2x2 build_H0_matrix(const Structure& H0_terms, int N) {
+    size_t dim = 1ULL << N;                  // размерность итоговой матрицы
+    Matrix2x2 H(dim * dim, 0.0);             // плоска€ матрица dim x dim
+
+    cout << "Number of terms: " << H0_terms.size() << endl;
+    for (const auto& term : H0_terms) {
+        cout << "Term has " << term.size() << " matrices" << endl;// начинаем с первой матрицы терма
+        Matrix2x2 prod = term[0];
+
+        // перемножаем все матрицы терма
+        for (size_t i = 1; i < term.size(); ++i) {
+            prod = kron(prod, term[i]);
+        }
+
+        // суммируем терм в общую матрицу H
+        for (size_t i = 0; i < H.size(); ++i) {
+            H[i] += prod[i];
+        }
+    }
+
+    return H;
+}
+
+Matrix2x2 build_term_matrix(const vector<vector<Complex>>& term, int N) {
+    size_t dim = 1ULL << N;                  // размерность итоговой матрицы
+    Matrix2x2 H(dim * dim, 0.0);             // плоска€ матрица dim x dim
+ 
+    Matrix2x2 prod = term[0];
+
+    // перемножаем все матрицы терма
+    for (size_t i = 1; i < term.size(); ++i) {
+        prod = kron(prod, term[i]);
+    }
+
+    // суммируем терм в общую матрицу H
+    for (size_t i = 0; i < H.size(); ++i) {
+        H[i] += prod[i];
+    }
+
+    return H;
+}
+
+// -- - ћатрично - векторное произведение : A * vec-- -
+vector<Complex> dot_product_1(const Matrix2x2& A, const std::vector<Complex>& vec) {
+    size_t n = static_cast<size_t>(std::sqrt(A.size()));
+    std::vector<Complex> result(n, 0.0);
+
+    for (size_t i = 0; i < n; ++i) {
+        Complex sum = 0.0;
+        for (size_t j = 0; j < n; ++j) {
+            sum += A[i * n + j] * vec[j];
+        }
+        result[i] = sum;
+    }
+
+    return result;
+}
+
+// --- —кал€рное произведение: (vec*)^T * Av ---
+Complex dot_T_product(const std::vector<Complex>& vec, const std::vector<Complex>& Av) {
+    if (vec.size() != Av.size()) {
+        throw std::runtime_error("dot_T_product: vector size mismatch");
+    }
+
+    Complex sum = 0.0;
+    for (size_t i = 0; i < vec.size(); ++i) {
+        sum += std::conj(vec[i]) * Av[i];
+    }
+
+    return sum;
+}
+
+// --- ѕеремножение двух квадратных матриц ---
+Matrix2x2 multiply_matrix(const Matrix2x2& A, const Matrix2x2& B) {
+    size_t n = static_cast<size_t>(std::sqrt(A.size()));
+    Matrix2x2 C(n * n, 0.0);
+
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j < n; ++j) {
+            Complex sum = 0.0;
+            for (size_t k = 0; k < n; ++k) {
+                sum += A[i * n + k] * B[k * n + j];
+            }
+            C[i * n + j] = sum;
+        }
+    }
+    return C;
+}
+
+// --- ≈динична€ матрица ---
+Matrix2x2 identity_matrix(size_t n) {
+    Matrix2x2 I(n * n, 0.0);
+    for (size_t i = 0; i < n; ++i)
+        I[i * n + i] = 1.0;
+    return I;
+}
+
+// --- ¬озведение в степень H^k ---
+Matrix2x2 power_H0_matrix(Matrix2x2 H, int k) {
+    if (k < 0) {
+        throw std::runtime_error("power_H0_matrix: negative powers not supported");
+    }
+
+    size_t n = static_cast<size_t>(std::sqrt(H.size()));
+    Matrix2x2 result = identity_matrix(n);
+
+    while (k > 0) {
+        if (k % 2 == 1) {
+            result = multiply_matrix(result, H);
+        }
+        H = multiply_matrix(H, H);
+        k /= 2;
+    }
+
+    return result;
+}
+
+Complex trace_matrix(const std::vector<Complex>& H, size_t n) {
+    Complex trace = 0.0;
+
+    for (size_t i = 0; i < n; ++i) {
+        trace += H[i * n + i]; // диагональный элемент
+    }
+
+    return trace;
+}
+
+
+Structure combine(
+    const Structure& H0,
+    const Structure& M0,
+    double beta
+) {
+    if (std::abs(beta) < 1e-15) {
+        return H0; // Beta == 0 ? Ќичего не мен€ем
+    }
+
+    Structure H;
+    H.reserve(H0.size() + M0.size());
+
+    //  опируем все из H0
+    for (const auto& term : H0) {
+        H.push_back(term);
+    }
+
+    // ƒобавл€ем -beta * (только первую матрицу каждого term в M0)
+    for (const auto& term : M0) {
+        std::vector<Matrix2x2> processed_term = term; // копи€
+
+        //if (!processed_term.empty()) {
+        //    for (auto& c : processed_term[0]) {
+        //        c *= Complex(-beta, 0.0); // умножаем только первую матрицу
+        //    }
+        //}
+        
+        H.push_back(std::move(processed_term));
+    }
+
+    return H;
+}
+

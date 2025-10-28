@@ -7,6 +7,8 @@
 #include <iomanip>
 #include <locale>
 #include <chrono>
+#include <thread>
+#include <omp.h>
 
 using namespace std;
 
@@ -30,9 +32,16 @@ std::vector<std::vector<int>> createM0_structure(int N);
 std::vector<double>  factor(int N);
 Structure build_structure(const std::vector<std::vector<int>>& vec_full, 
 	const std::vector<double>& factors);
+Structure build_structure(const std::vector<std::vector<int>>& vec_full);
+Structure combine(
+    const Structure& H0,
+    const Structure& M0,
+    double beta
+);
 
 // --- ѕечать ---
 void print_matrix(const Matrix2x2& M);
+void print_full_matrix(const Matrix2x2& M);
 void print_structure_codes(const std::vector<std::vector<int>>& vec_full);
 void print_structure_matrices(const Structure& S);
 void print_structure_term(const vector< Matrix2x2>& term);
@@ -65,14 +74,24 @@ void kron_mult_recursive_old(   ///////////// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     size_t stride
 );
 
-void kron_mult_recursive_double(
+//void kron_mult_recursive_double(
+//    const std::vector<Matrix2x2>& factors,
+//    size_t depth,
+//    const Complex* src,
+//    Complex* dst,
+//    Complex* tmp,
+//    size_t stride,
+//    size_t dim
+//);
+
+void kron_mult_iterative(
     const std::vector<Matrix2x2>& factors,
-    size_t depth,
-    const Complex* src,
+    const Complex* src_in,
     Complex* dst,
-    size_t stride,
+    Complex* tmp,
     size_t dim
 );
+
 
 /// --- скал€рное умножение ---  
 Complex dot_product(const std::vector<Complex>& a, const std::vector<Complex>& b);
@@ -82,3 +101,15 @@ vector<Complex> generateRademacherComplexVector(size_t dimension);
 vector<Complex> Hutchinson_vector(size_t n);
 
 void printVector_double(const std::vector<double>& v);
+
+// ------------------------- тест ---------------------------- //
+
+Matrix2x2 kron(const Matrix2x2& A, const Matrix2x2& B);
+Matrix2x2 build_H0_matrix(const Structure& H0_terms, int N);
+Matrix2x2 build_term_matrix(const vector<vector<Complex>>& term, int N);
+vector<Complex> dot_product_1(const Matrix2x2& A, const std::vector<Complex>& vec);
+Complex dot_T_product(const std::vector<Complex>& vec, const std::vector<Complex>& Av);
+Matrix2x2 multiply_matrix(const Matrix2x2& A, const Matrix2x2& B);
+Matrix2x2 identity_matrix(size_t n);
+Matrix2x2 power_H0_matrix(Matrix2x2 H, int k);
+Complex trace_matrix(const std::vector<Complex>& H, size_t n);
